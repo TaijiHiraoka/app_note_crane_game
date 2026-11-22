@@ -65,7 +65,23 @@
         <datalist id="placeList"></datalist>
       </label>
 
+      <div class="prize-edit">
+        <div id="prizePreview" class="prize-slot"></div>
+        <div class="prize-side">
+          <span class="field-label">景品の写真（サムネ用）</span>
+          <div class="photo-actions">
+            <label class="ghost-btn" id="prizeCameraLabel">撮影する
+              <input id="prizeCameraInput" class="vh" type="file" accept="image/*" capture="environment">
+            </label>
+            <label class="ghost-btn">写真を選ぶ
+              <input id="prizePickInput" class="vh" type="file" accept="image/*">
+            </label>
+          </div>
+        </div>
+      </div>
+
       <div class="photos-edit">
+        <span class="field-label photos-label">台・全体の写真</span>
         <div id="photoPreview" class="thumbs"></div>
         <div class="photo-actions">
           <label class="ghost-btn">撮影する

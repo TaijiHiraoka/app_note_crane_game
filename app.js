@@ -14,12 +14,15 @@ const KINDS = {
     notePlaceholder: 'リングの引っかかり方、アームの癖など',
     fields: [
       { key: 'ringStart', label: 'リングスタート位置', options: ['左', '右'] },
+      { key: 'ringShape', label: 'リング形状', options: ['通常リング', '小リング', '太リング', '大リング', 'Sフック'] },
+      { key: 'chainLength', label: 'チェーン長さ', options: ['通常', '長い', '短い'] },
       // 開口部は「台を上から見た向き」で 3×3 に並べる（空文字 '' は真ん中の目印）
       { key: 'opening', label: 'フック開口部の向き', layout: 'dir',
         options: ['斜め左奥', '奥', '斜め右奥', '左', '', '右', '斜め左手前', '手前', '斜め右手前'] },
       { key: 'antiSlip', label: '滑り込み防止', options: ['あり', 'なし'] },
       { key: 'aim', label: '狙い方', options: ['ひっかけ', '滑り込み'] },
       { key: 'swing', label: '振れ具合', options: ['よく振れる', '振れない'] },
+      { key: 'swingUse', label: '振りの利用', options: ['よく振る', '振りを抑える'] },
       { key: 'cycle', label: '周期', options: ['左', '右', '左から中央', '右から中央'] },
       { key: 'fineFB', label: '微調整（フックに対し前後）', options: ['真横', 'ちょい奥', 'ちょい手前'] },
       { key: 'fineLR', label: '微調整（フックに対し左右）', options: ['真上', '近く', '遠ざけ'] },
@@ -34,15 +37,22 @@ const KINDS = {
     notePlaceholder: 'ずらし方、ハマりどころなど',
     fields: [
       { key: 'bridge', label: '橋構造', options: ['並行', '末広', '段違い'] },
-      { key: 'bridgeWidth', label: '橋幅', options: ['広い', '狭い'] },
+      { key: 'bridgeWidth', label: '橋幅', options: ['普通', '広い', '狭い'] },
       { key: 'topBarGrip', label: '上段バー滑り止め', options: ['あり', 'なし'] },
       { key: 'armTwist', label: 'アーム捩れ', options: ['右', '左', '右強め', '左強め', 'なし'] },
       { key: 'shape', label: '箱形状', options: ['縦長箱', 'デカ箱', '厚みある中箱', '小箱', '立方体', '薄箱'] },
-      { key: 'method', label: '取り方', options: ['スライド', '押し込み', 'ちゃぶ台', 'とめがけ', '抑えがけ', '頂点突き'] },
+      { key: 'method', label: '取り方', options: ['縦はめ', 'スライド', '押し', 'ちゃぶ台返し', 'とめがけ', '頂点突き'] },
       { key: 'get', label: 'ゲット', options: ['できた', 'できなかった'], layout: 'get' },
+      { key: 'assist', label: 'アシスト', options: ['あり', 'なし'] },
     ],
     summary: ['shape', 'method', 'bridge'],
   },
+};
+
+// 選択肢の名前を変えたとき、過去の記録を新しい名前に置きかえる対応表
+// （対応する新しい選択肢がないものは、そのまま残します）
+const RENAMED_OPTIONS = {
+  box: { method: { '押し込み': '押し', 'ちゃぶ台': 'ちゃぶ台返し' } },
 };
 
 const PHOTO_MAX_SIZE = 1600;  // 写真の長辺(px)。小さくすると容量が減る
@@ -172,7 +182,8 @@ async function compressImage(file) {
    draft … 入力中の内容
    {
      mode: 'new' | 'edit', id, createdAt, location, locState, locPromise,
-     photos: [{id, blob, url, saved}], removedPhotoIds: [],
+     prize: {id, blob, url, saved} | null,   … 景品の写真（一覧のサムネになる）
+     photos: [{id, blob, url, saved}], removedPhotoIds: [],   … 台・全体の写真
      kind: 'hook' | 'box', sel: { hook: {...}, box: {...} }, dirty
    }
    フックと箱は両方の入力を覚えておき、保存するのは選んでいる方だけ。
@@ -188,6 +199,7 @@ async function openForm({ from = null, duplicate = false } = {}) {
     location: editing ? from.location : null,
     locState: 'idle',
     locPromise: null,
+    prize: null,
     photos: [],
     removedPhotoIds: [],
     kind: (from && from.kind) || 'hook',
@@ -208,6 +220,10 @@ async function openForm({ from = null, duplicate = false } = {}) {
 
   // 編集のときは、保存済みの写真を読み込んでおく
   if (editing) {
+    if (from.prizePhotoId) {
+      const p = await dbGet('photos', from.prizePhotoId);
+      if (p) draft.prize = { id: p.id, blob: p.blob, url: URL.createObjectURL(p.blob), saved: true };
+    }
     for (const pid of from.photoIds || []) {
       const p = await dbGet('photos', pid);
       if (p) draft.photos.push({ id: p.id, blob: p.blob, url: URL.createObjectURL(p.blob), saved: true });
@@ -215,6 +231,7 @@ async function openForm({ from = null, duplicate = false } = {}) {
   }
 
   renderKind();
+  renderPrize();
   renderDraftPhotos();
   $('#saveBtn').disabled = false;
   $('#saveBtn').textContent = '保存';
@@ -226,6 +243,7 @@ async function openForm({ from = null, duplicate = false } = {}) {
 
 function discardDraft() {
   if (draft) draft.photos.forEach((p) => URL.revokeObjectURL(p.url));
+  if (draft && draft.prize) URL.revokeObjectURL(draft.prize.url);
   draft = null;
 }
 
@@ -366,6 +384,44 @@ async function addFiles(files) {
   renderDraftPhotos();
 }
 
+// 景品の写真（1枚だけ。撮り直すと入れかわる）
+async function setPrize(file) {
+  if (!file || !draft) return;
+  try {
+    const blob = await compressImage(file);
+    if (!draft) return;
+    removePrize();
+    draft.prize = { id: uid(), blob, url: URL.createObjectURL(blob), saved: false };
+    draft.dirty = true;
+  } catch {
+    toast('この写真は読み込めませんでした');
+  }
+  renderPrize();
+}
+
+function removePrize() {
+  const p = draft && draft.prize;
+  if (!p) return;
+  URL.revokeObjectURL(p.url);
+  if (p.saved) draft.removedPhotoIds.push(p.id);
+  draft.prize = null;
+  draft.dirty = true;
+}
+
+function renderPrize() {
+  const box = $('#prizePreview');
+  box.replaceChildren();
+  const has = !!(draft && draft.prize);
+  $('#prizeCameraLabel').firstChild.textContent = has ? '撮り直す' : '撮影する';
+  if (!has) {
+    box.append(el('span', { className: 'prize-empty', textContent: '景品' }));
+    return;
+  }
+  const remove = el('button', { type: 'button', textContent: '×', ariaLabel: '景品の写真を外す' });
+  remove.addEventListener('click', () => { removePrize(); renderPrize(); });
+  box.append(el('img', { src: draft.prize.url, alt: '' }), remove);
+}
+
 function renderDraftPhotos() {
   const box = $('#photoPreview');
   box.replaceChildren();
@@ -392,7 +448,7 @@ async function saveDraft() {
   if (!detail.note) delete detail.note;
   if (!detail.tries) delete detail.tries;
 
-  if (!draft.photos.length && !place && !memo && !Object.keys(detail).length) {
+  if (!draft.photos.length && !draft.prize && !place && !memo && !Object.keys(detail).length) {
     toast('何か1つ入力してください');
     return;
   }
@@ -416,9 +472,11 @@ async function saveDraft() {
     memo,                                     // 全体のメモ
     kind: draft.kind,                         // 'hook' | 'box'
     detail,                                   // 選んだ種類の項目＋tries（手数）＋note（種類のメモ）
-    photoIds: draft.photos.map((p) => p.id),
+    prizePhotoId: draft.prize ? draft.prize.id : null,  // 景品の写真
+    photoIds: draft.photos.map((p) => p.id),            // 台・全体の写真
   };
-  const newPhotos = draft.photos.filter((p) => !p.saved).map((p) => ({ id: p.id, recordId: record.id, blob: p.blob }));
+  const allPhotos = draft.prize ? [draft.prize, ...draft.photos] : draft.photos;
+  const newPhotos = allPhotos.filter((p) => !p.saved).map((p) => ({ id: p.id, recordId: record.id, blob: p.blob }));
   const removed = draft.removedPhotoIds.slice();
   const wasEdit = draft.mode === 'edit';
 
@@ -506,10 +564,14 @@ async function renderList() {
       lastDay = day;
     }
     const def = KINDS[rec.kind];
-    const keys = def ? def.summary.map((k) => rec.detail && rec.detail[k]).filter(Boolean) : [];
-    const sub = keys.length ? keys.join(' / ') : (rec.memo || (rec.photoIds.length ? '写真のみ' : ''));
+    const dt = rec.detail || {};
+    let keys = def ? def.summary.map((k) => dt[k]).filter(Boolean) : [];
+    // 代表項目が空なら、選んである項目から最大3つ表示
+    if (def && !keys.length) keys = def.fields.filter((f) => f.key !== 'get' && dt[f.key]).slice(0, 3).map((f) => dt[f.key]);
+    const thumbId = rec.prizePhotoId || rec.photoIds[0];  // 景品の写真を優先してサムネに
+    const sub = keys.length ? keys.join(' / ') : (rec.memo || (thumbId ? '写真のみ' : ''));
 
-    const thumb = rec.photoIds.length ? el('img', { className: 'entry-thumb', alt: '' }) : el('span');
+    const thumb = thumbId ? el('img', { className: 'entry-thumb', alt: '' }) : el('span');
     const item = el('button', { className: 'entry', type: 'button' },
       el('span', { className: 'entry-time', textContent: fmtTime(d) }),
       el('span', { className: 'entry-main' },
@@ -519,7 +581,7 @@ async function renderList() {
       thumb);
     item.addEventListener('click', () => openDetail(rec.id));
     list.append(item);
-    if (rec.photoIds.length) thumbJobs.push([thumb, rec.photoIds[0]]);
+    if (thumbId) thumbJobs.push([thumb, thumbId]);
   });
 
   // サムネイルは後から順に読み込む
@@ -554,6 +616,16 @@ async function renderDetail(id) {
 
   const body = $('#detailBody');
   body.replaceChildren();
+
+  if (rec.prizePhotoId) {
+    const p = await dbGet('photos', rec.prizePhotoId);
+    if (p) {
+      const u = URL.createObjectURL(p.blob);
+      detailUrls.push(u);
+      body.append(el('figure', { className: 'detail-prize' },
+        el('img', { src: u, alt: '景品の写真' }), el('figcaption', { textContent: '景品' })));
+    }
+  }
 
   const photosBox = el('div', { className: 'detail-photos' });
   for (const pid of rec.photoIds) {
@@ -608,6 +680,7 @@ async function deleteCurrent() {
   const rec = detailRecord;
   await dbWrite((records, photos) => {
     rec.photoIds.forEach((id) => photos.delete(id));
+    if (rec.prizePhotoId) photos.delete(rec.prizePhotoId);
     records.delete(rec.id);
   });
   toast('削除しました');
@@ -690,6 +763,7 @@ async function importFile(file) {
     data.records.forEach((r) => records.put(r)); // 同じIDは上書き、新しいものは追加
   });
   toast(`${data.records.length}件を読み込みました`);
+  await migrateRecords().catch(() => {});
   renderList();
 }
 
@@ -745,7 +819,27 @@ $('#importInput').addEventListener('change', async (e) => {
   if (f) { $('#menu').close(); await importFile(f).catch(() => toast('読み込みに失敗しました')); }
 });
 
-renderList();
+$('#prizeCameraInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; setPrize(f); });
+$('#prizePickInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; setPrize(f); });
+
+// 選択肢の名前を変えた分を、過去の記録にも反映する（起動時に1回）
+async function migrateRecords() {
+  const records = await dbGetAll('records');
+  const changed = [];
+  records.forEach((r) => {
+    const map = RENAMED_OPTIONS[r.kind];
+    if (!map || !r.detail) return;
+    let hit = false;
+    Object.entries(map).forEach(([key, table]) => {
+      const v = r.detail[key];
+      if (v && table[v]) { r.detail[key] = table[v]; hit = true; }
+    });
+    if (hit) changed.push(r);
+  });
+  if (changed.length) await dbWrite((recs) => changed.forEach((r) => recs.put(r)));
+}
+
+migrateRecords().catch(() => {}).finally(renderList);
 
 // オフラインでも開けるようにする（PWAの仕組み）
 if ('serviceWorker' in navigator) {

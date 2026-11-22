@@ -19,4 +19,8 @@
 ## データについて
 - 記録はその端末のブラウザ内（IndexedDB）に保存されます。
 - 「設定」→「バックアップを保存」でJSONファイルに書き出せます。
-- 記録1件の形：`{ id, createdAt, place, location, memo, kind: 'hook'|'box', detail: {各項目, tries, note}, photoIds }`
+- 記録1件の形：`{ id, createdAt, place, location, memo, kind: 'hook'|'box', detail: {各項目, tries, note}, prizePhotoId, photoIds }`
+
+## 更新履歴
+- v2：景品の写真（サムネ用）を追加。フックにリング形状・チェーン長さ・振りの利用、箱にアシストを追加。橋幅と取り方の選択肢を変更（過去の「押し込み」→「押し」、「ちゃぶ台」→「ちゃぶ台返し」に自動で置きかえ）
+- v1：最初の版
