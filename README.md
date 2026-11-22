@@ -1,2 +1,22 @@
-# app_note_crane_game
-クレーンゲーム上達メモアプリ
+# クレーンゲームメモ
+
+クレーンゲームの台の設定（フック／箱）と取り方、結果を写真つきで記録するWebアプリです。
+スマホのホーム画面に追加すると、アプリのように使えます（オフラインでも動きます）。
+
+## 公開のしかた（GitHub Pages）
+1. GitHubで新しいリポジトリを作る（例：`crane-memo`、Public）
+2. 「Add file」→「Upload files」で、このフォルダの中身をすべてアップロードして Commit
+3. 「Settings」→「Pages」→ Branch を `main` / `(root)` にして Save
+4. 1〜2分後に `https://<ユーザー名>.github.io/crane-memo/` で開けます
+
+## 項目を変えたいとき
+`app.js` の先頭にある `KINDS` の選択肢を書きかえるだけで、入力画面・一覧・詳細に反映されます。
+すでに保存した記録と食い違わないよう、`key` は変えずに `label` や `options` を変えてください。
+
+## 更新したのに古い画面が出るとき
+`sw.js` の `CACHE` の番号（`crane-notes-v1` → `v2`）を上げてからアップロードし、アプリを開き直してください。
+
+## データについて
+- 記録はその端末のブラウザ内（IndexedDB）に保存されます。
+- 「設定」→「バックアップを保存」でJSONファイルに書き出せます。
+- 記録1件の形：`{ id, createdAt, place, location, memo, kind: 'hook'|'box', detail: {各項目, tries, note}, photoIds }`

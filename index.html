@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>クレーンゲームメモ</title>
+  <meta name="theme-color" content="#EEF0E8" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#151916" media="(prefers-color-scheme: dark)">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon-192.png">
+  <link rel="apple-touch-icon" href="icon-192.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="クレーンメモ">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Zen+Kaku+Gothic+New:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <!-- 一覧画面 -->
+  <header class="top">
+    <div class="top-row">
+      <h1>クレーンゲームメモ</h1>
+      <span id="count" class="count"></span>
+      <button id="menuBtn" class="text-btn menu-btn" type="button">設定</button>
+    </div>
+    <div class="filters" id="filters" role="group" aria-label="絞り込み">
+      <button type="button" data-filter="all" aria-pressed="true">すべて</button>
+      <button type="button" data-filter="hook" aria-pressed="false">フック</button>
+      <button type="button" data-filter="box" aria-pressed="false">箱</button>
+      <button type="button" data-filter="win" aria-pressed="false">ゲットのみ</button>
+    </div>
+  </header>
+
+  <p id="stats" class="stats"></p>
+  <main id="list" class="list"></main>
+
+  <div id="empty" class="empty" hidden>
+    <p class="empty-lead">まだ記録がありません</p>
+    <p>「記録する」を押すと、台の設定や取り方を写真つきで残せます。</p>
+  </div>
+
+  <button id="newBtn" class="record-btn" type="button">記録する</button>
+
+  <!-- 記録の入力画面（新規・編集どちらもここ） -->
+  <section id="formView" class="sheet" hidden aria-label="記録の入力">
+    <div class="sheet-bar">
+      <button type="button" class="text-btn" id="cancelBtn">やめる</button>
+      <span class="sheet-title" id="formTitle">新しい記録</span>
+      <button type="button" class="primary-btn" id="saveBtn">保存</button>
+    </div>
+    <div class="sheet-body">
+      <dl class="meta">
+        <div class="meta-row"><dt>日時</dt><dd id="formTime"></dd></div>
+        <div class="meta-row">
+          <dt>位置</dt>
+          <dd><span id="locStatus"></span> <button type="button" class="text-btn small" id="locRetry" hidden>もう一度取得</button></dd>
+        </div>
+      </dl>
+
+      <label class="field">
+        <span class="field-label">店舗・場所</span>
+        <input id="placeInput" type="text" list="placeList" placeholder="例：〇〇ゲームセンター 2F" autocomplete="off">
+        <datalist id="placeList"></datalist>
+      </label>
+
+      <div class="photos-edit">
+        <div id="photoPreview" class="thumbs"></div>
+        <div class="photo-actions">
+          <label class="ghost-btn">撮影する
+            <input id="cameraInput" class="vh" type="file" accept="image/*" capture="environment">
+          </label>
+          <label class="ghost-btn">写真を選ぶ
+            <input id="pickInput" class="vh" type="file" accept="image/*" multiple>
+          </label>
+        </div>
+      </div>
+
+      <label class="field">
+        <span class="field-label">メモ（景品名・台の様子など）</span>
+        <textarea id="memoInput" rows="3" placeholder="景品名、設定の印象など"></textarea>
+      </label>
+
+      <div class="kind-switch" role="group" aria-label="種類">
+        <button type="button" data-kind="hook" aria-pressed="true">フック</button>
+        <button type="button" data-kind="box" aria-pressed="false">箱</button>
+      </div>
+
+      <div id="kindFields" class="fields"></div>
+    </div>
+  </section>
+
+  <!-- 詳細画面 -->
+  <section id="detailView" class="sheet" hidden aria-label="記録の詳細">
+    <div class="sheet-bar">
+      <button type="button" class="text-btn" id="backBtn">戻る</button>
+      <span class="sheet-title" id="detailTitle"></span>
+      <button type="button" class="text-btn danger" id="deleteBtn">削除</button>
+    </div>
+    <div class="sheet-body">
+      <div id="detailBody"></div>
+      <div class="detail-actions">
+        <button type="button" class="ghost-btn" id="dupBtn">同じ設定で新規</button>
+        <button type="button" class="primary-btn big" id="editBtn">編集する</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- 設定メニュー -->
+  <dialog id="menu" class="menu">
+    <h2>データ</h2>
+    <p class="menu-note">記録はこの端末の中だけに保存されています。機種変更や念のための控えに、ときどきバックアップを保存してください。</p>
+    <button type="button" class="ghost-btn wide" id="exportBtn">バックアップを保存</button>
+    <button type="button" class="ghost-btn wide" id="importBtn">バックアップから復元</button>
+    <p class="menu-note" id="storageInfo"></p>
+    <button type="button" class="primary-btn wide" id="menuClose">閉じる</button>
+  </dialog>
+  <input type="file" id="importInput" class="vh" accept="application/json,.json">
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
