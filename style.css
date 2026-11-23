@@ -295,3 +295,15 @@ button { font: inherit; }
   position: absolute; left: .5rem; top: .5rem; background: var(--accent); color: var(--accent-ink);
   font-size: .78rem; font-weight: 700; padding: 0 .5rem; border-radius: 5px;
 }
+
+/* ---------- Googleドライブ書き出し ---------- */
+.menu { max-height: 90vh; overflow-y: auto; }
+.menu-sub { margin-top: 1.3rem !important; padding-top: 1rem; border-top: 1px solid var(--line); }
+.menu-field { margin-top: .6rem; }
+.menu-field input {
+  width: 100%; padding: .6rem .7rem; border: 1px solid var(--line); border-radius: 10px;
+  background: var(--paper); color: var(--ink); font: inherit; font-size: 16px;
+}
+#syncBtn:disabled { opacity: .5; }
+#sheetLink { display: block; font-weight: 700; }
+#sheetLink[hidden] { display: none; }

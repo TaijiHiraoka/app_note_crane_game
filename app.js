@@ -23,9 +23,11 @@ const KINDS = {
       { key: 'aim', label: '狙い方', options: ['ひっかけ', '滑り込み'] },
       { key: 'swing', label: '振れ具合', options: ['よく振れる', '振れない'] },
       { key: 'swingUse', label: '振りの利用', options: ['よく振る', '振りを抑える'] },
-      { key: 'cycle', label: '周期', options: ['左', '右', '左から中央', '右から中央'] },
-      { key: 'fineFB', label: '微調整（フックに対し前後）', options: ['真横', 'ちょい奥', 'ちょい手前'] },
-      { key: 'fineLR', label: '微調整（フックに対し左右）', options: ['真上', '近く', '遠ざけ'] },
+      { key: 'cycle', label: '周期', options: ['左', '左から中央', '右から中央', '右'] },
+      // 微調整はフックを真上から見た配置で 3×3 に並べる
+      { key: 'finePos', label: '微調整（手前奥左右）', layout: 'dir',
+        options: ['左奥', '奥', '右奥', '左横', '真上', '右横', '左手前', '手前', '右手前'] },
+      { key: 'fineDist', label: '微調整（よせ）', options: ['近く', '遠ざけ'] },
       { key: 'get', label: 'ゲット', options: ['できた', 'できなかった'], layout: 'get' },
     ],
     // 一覧に出す代表項目
@@ -49,11 +51,34 @@ const KINDS = {
   },
 };
 
-// 選択肢の名前を変えたとき、過去の記録を新しい名前に置きかえる対応表
-// （対応する新しい選択肢がないものは、そのまま残します）
-const RENAMED_OPTIONS = {
-  box: { method: { '押し込み': '押し', 'ちゃぶ台': 'ちゃぶ台返し' } },
-};
+// 項目や選択肢を変えたとき、過去の記録を新しい形に直す処理（起動時に1回）
+// 対応するものがない値は空欄になります。元の値は記録の中に残してあり、画面には出ません。
+const SCHEMA = 3;
+const MIGRATIONS = [
+  // v2：取り方の名前変更
+  (r) => {
+    const map = { '押し込み': '押し', 'ちゃぶ台': 'ちゃぶ台返し' };
+    if (r.kind === 'box' && map[r.detail.method]) r.detail.method = map[r.detail.method];
+  },
+  // v3：微調整を「手前奥左右」と「よせ」に組みかえ（同じ名前の選択肢だけ引き継ぐ）
+  (r) => {
+    if (r.kind !== 'hook') return;
+    const d = r.detail;
+    const pos = ['左奥', '奥', '右奥', '左横', '真上', '右横', '左手前', '手前', '右手前'];
+    if (!d.finePos) d.finePos = [d.fineLR, d.fineFB].find((v) => pos.includes(v));
+    if (!d.fineDist && ['近く', '遠ざけ'].includes(d.fineLR)) d.fineDist = d.fineLR;
+    if (!d.finePos) delete d.finePos;
+    if (!d.fineDist) delete d.fineDist;
+  },
+];
+
+function migrate(r) {
+  if ((r.schema || 0) >= SCHEMA) return false;
+  r.detail = r.detail || {};
+  MIGRATIONS.forEach((fn) => fn(r));
+  r.schema = SCHEMA;
+  return true;
+}
 
 const PHOTO_MAX_SIZE = 1600;  // 写真の長辺(px)。小さくすると容量が減る
 const PHOTO_QUALITY = 0.82;   // JPEG画質 0〜1
@@ -464,7 +489,7 @@ async function saveDraft() {
 
   const record = {
     id: draft.id,
-    schema: 2,                                // データ形式の版（将来の変更用）
+    schema: SCHEMA,                           // データ形式の版（将来の変更用）
     createdAt: draft.createdAt.toISOString(),
     updatedAt: new Date().toISOString(),
     location: draft.location,                 // {lat, lng, accuracy} または null
@@ -777,7 +802,140 @@ async function showStorageInfo() {
 }
 
 /* =========================================================
-   10) ボタンをつなぐ
+   10) Googleドライブへ書き出し（Google Apps Script 経由）
+   ・写真はドライブのフォルダに1枚ずつ保存（すでにあるものは送らない）
+   ・記録はスプレッドシートに1件1行で保存（同じ記録IDは上書き）
+   何度押しても、増えた分・変わった分だけが反映されます。
+   ========================================================= */
+const GAS_URL_KEY = 'crane-notes.gasUrl';
+const GAS_SECRET_KEY = 'crane-notes.gasSecret';
+const PHOTO_BATCH = 4;     // 1回に送る写真の枚数
+const RECORD_BATCH = 300;  // 1回に送る記録の件数
+
+function loadDriveSettings() {
+  try {
+    $('#gasUrl').value = localStorage.getItem(GAS_URL_KEY) || '';
+    $('#gasSecret').value = localStorage.getItem(GAS_SECRET_KEY) || '';
+  } catch { /* 保存できない環境では毎回入力 */ }
+}
+
+function saveDriveSettings(url, secret) {
+  try {
+    localStorage.setItem(GAS_URL_KEY, url);
+    localStorage.setItem(GAS_SECRET_KEY, secret);
+  } catch { /* 無視 */ }
+}
+
+async function callGas(url, payload) {
+  // 余計なヘッダーを付けずに送ると、ブラウザの事前確認なしで Apps Script に届く
+  const res = await fetch(url, { method: 'POST', body: JSON.stringify(payload) });
+  if (!res.ok) throw new Error(`通信エラー（${res.status}）`);
+  let data;
+  try { data = await res.json(); } catch { throw new Error('URLが正しくないか、公開設定が「全員」になっていません'); }
+  if (!data.ok) throw new Error(data.error || '不明なエラー');
+  return data;
+}
+
+const localDate = (d) => `${d.getFullYear()}/${pad(d.getMonth() + 1)}/${pad(d.getDate())}`;
+
+// 記録1件を「見出し → 値」の形にする（見出しがスプレッドシートの列名になる）
+function recordToRow(rec) {
+  const d = new Date(rec.createdAt);
+  const dt = rec.detail || {};
+  const def = KINDS[rec.kind];
+  const v = {
+    '記録ID': rec.id,
+    '日時': { date: rec.createdAt },
+    '日付': localDate(d),
+    '時刻': fmtTime(d),
+    '曜日': WEEK[d.getDay()],
+    '店舗': rec.place || '',
+    '種類': def ? def.label : '',
+    'ゲット': dt.get || '',
+    'ゲット数': dt.get === 'できた' ? 1 : 0,
+    '手数': dt.tries || '',
+  };
+  // フック・箱の全項目を列にする（記録していない側は空欄）
+  Object.values(KINDS).forEach((k) => k.fields.forEach((f) => {
+    if (f.key === 'get') return;
+    if (!(f.label in v)) v[f.label] = '';
+  }));
+  if (def) def.fields.forEach((f) => { if (f.key !== 'get') v[f.label] = dt[f.key] || ''; });
+  v['種類のメモ'] = dt.note || '';
+  v['メモ'] = rec.memo || '';
+  v['緯度'] = rec.location ? rec.location.lat : '';
+  v['経度'] = rec.location ? rec.location.lng : '';
+  v['写真枚数'] = rec.photoIds.length + (rec.prizePhotoId ? 1 : 0);
+  v['作成日時'] = { date: rec.createdAt };
+  v['更新日時'] = { date: rec.updatedAt || rec.createdAt };
+  return { values: v, prizePhotoId: rec.prizePhotoId || null, photoIds: rec.photoIds };
+}
+
+function setSyncStatus(text) { $('#syncStatus').textContent = text; }
+
+let syncing = false;
+async function syncToDrive() {
+  if (syncing) return;
+  const url = $('#gasUrl').value.trim();
+  const secret = $('#gasSecret').value.trim();
+  if (!/^https:\/\/script\.google\.com\/.+\/exec/.test(url)) { setSyncStatus('Apps Script のURL（…/exec で終わるもの）を入れてください'); return; }
+  if (!secret) { setSyncStatus('合言葉を入れてください'); return; }
+  saveDriveSettings(url, secret);
+
+  syncing = true;
+  const btn = $('#syncBtn');
+  btn.disabled = true;
+  $('#sheetLink').hidden = true;
+  try {
+    const records = await dbGetAll('records');
+    if (!records.length) { setSyncStatus('書き出す記録がありません'); return; }
+
+    // 1. ドライブにまだない写真を調べる
+    setSyncStatus('ドライブの写真を確認しています…');
+    const photoMeta = [];
+    records.forEach((r) => {
+      if (r.prizePhotoId) photoMeta.push({ id: r.prizePhotoId, recordId: r.id, role: 'prize', createdAt: r.createdAt });
+      r.photoIds.forEach((id) => photoMeta.push({ id, recordId: r.id, role: 'table', createdAt: r.createdAt }));
+    });
+    const { existing } = await callGas(url, { secret, action: 'check', photoIds: photoMeta.map((p) => p.id) });
+    const have = new Set(existing);
+    const missing = photoMeta.filter((p) => !have.has(p.id));
+
+    // 2. 足りない写真を少しずつ送る
+    for (let i = 0; i < missing.length; i += PHOTO_BATCH) {
+      setSyncStatus(`写真を送っています… ${Math.min(i + PHOTO_BATCH, missing.length)} / ${missing.length}`);
+      const batch = [];
+      for (const m of missing.slice(i, i + PHOTO_BATCH)) {
+        const p = await dbGet('photos', m.id);
+        if (!p) continue;
+        batch.push({ ...m, dataUrl: await blobToDataURL(p.blob) });
+      }
+      if (batch.length) await callGas(url, { secret, action: 'photos', photos: batch });
+    }
+
+    // 3. 記録をスプレッドシートへ
+    const rows = records.sort((a, b) => a.createdAt.localeCompare(b.createdAt)).map(recordToRow);
+    let result;
+    for (let i = 0; i < rows.length; i += RECORD_BATCH) {
+      setSyncStatus(`スプレッドシートに書き込んでいます… ${Math.min(i + RECORD_BATCH, rows.length)} / ${rows.length}`);
+      result = await callGas(url, { secret, action: 'records', rows: rows.slice(i, i + RECORD_BATCH) });
+    }
+    setSyncStatus(`完了：記録${rows.length}件（新しい写真${missing.length}枚）`);
+    if (result && result.spreadsheetUrl) {
+      $('#sheetLink').href = result.spreadsheetUrl;
+      $('#sheetLink').hidden = false;
+    }
+    try { localStorage.setItem('crane-notes.lastSync', new Date().toISOString()); } catch { /* 無視 */ }
+  } catch (e) {
+    setSyncStatus(`書き出せませんでした：${e.message || e}`);
+  } finally {
+    syncing = false;
+    btn.disabled = false;
+  }
+}
+
+/* =========================================================
+   11) ボタンをつなぐ
    ========================================================= */
 $('#newBtn').addEventListener('click', () => openForm());
 $('#cancelBtn').addEventListener('click', () => {
@@ -809,7 +967,8 @@ $('#filters').addEventListener('click', (e) => {
   renderList();
 });
 
-$('#menuBtn').addEventListener('click', () => { showStorageInfo(); $('#menu').showModal(); });
+$('#menuBtn').addEventListener('click', () => { showStorageInfo(); loadDriveSettings(); $('#menu').showModal(); });
+$('#syncBtn').addEventListener('click', syncToDrive);
 $('#menuClose').addEventListener('click', () => $('#menu').close());
 $('#exportBtn').addEventListener('click', () => exportAll().catch(() => toast('書き出しに失敗しました')));
 $('#importBtn').addEventListener('click', () => $('#importInput').click());
@@ -822,20 +981,10 @@ $('#importInput').addEventListener('change', async (e) => {
 $('#prizeCameraInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; setPrize(f); });
 $('#prizePickInput').addEventListener('change', (e) => { const f = e.target.files[0]; e.target.value = ''; setPrize(f); });
 
-// 選択肢の名前を変えた分を、過去の記録にも反映する（起動時に1回）
+// 過去の記録を新しい形に直す
 async function migrateRecords() {
   const records = await dbGetAll('records');
-  const changed = [];
-  records.forEach((r) => {
-    const map = RENAMED_OPTIONS[r.kind];
-    if (!map || !r.detail) return;
-    let hit = false;
-    Object.entries(map).forEach(([key, table]) => {
-      const v = r.detail[key];
-      if (v && table[v]) { r.detail[key] = table[v]; hit = true; }
-    });
-    if (hit) changed.push(r);
-  });
+  const changed = records.filter(migrate);
   if (changed.length) await dbWrite((recs) => changed.forEach((r) => recs.put(r)));
 }
 

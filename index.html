@@ -130,6 +130,21 @@
     <button type="button" class="ghost-btn wide" id="exportBtn">バックアップを保存</button>
     <button type="button" class="ghost-btn wide" id="importBtn">バックアップから復元</button>
     <p class="menu-note" id="storageInfo"></p>
+
+    <h2 class="menu-sub">Googleドライブ</h2>
+    <p class="menu-note">記録をスプレッドシートに、写真をドライブに書き出します。何度押しても、増えた分・変わった分だけ反映されます。</p>
+    <label class="field menu-field">
+      <span class="field-label">Apps Script のURL</span>
+      <input id="gasUrl" type="url" inputmode="url" autocomplete="off" placeholder="https://script.google.com/macros/s/…/exec">
+    </label>
+    <label class="field menu-field">
+      <span class="field-label">合言葉</span>
+      <input id="gasSecret" type="password" autocomplete="off">
+    </label>
+    <button type="button" class="ghost-btn wide" id="syncBtn">Googleドライブに書き出す</button>
+    <p class="menu-note" id="syncStatus" role="status" aria-live="polite"></p>
+    <a class="menu-note map-link" id="sheetLink" target="_blank" rel="noopener" hidden>スプレッドシートを開く</a>
+
     <button type="button" class="primary-btn wide" id="menuClose">閉じる</button>
   </dialog>
   <input type="file" id="importInput" class="vh" accept="application/json,.json">
