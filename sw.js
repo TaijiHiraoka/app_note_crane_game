@@ -1,6 +1,6 @@
 // オフラインで開けるように、アプリ本体のファイルを端末に保存しておく仕組み。
 // ファイルを更新したら CACHE の番号を上げると、確実に新しい版に入れ替わります。
-const CACHE = 'crane-notes-v4';
+const CACHE = 'crane-notes-v5';
 const ASSETS = ['./', './index.html', './style.css', './app.js', './manifest.webmanifest', './icon-192.png', './icon-512.png'];
 
 self.addEventListener('install', (e) => {

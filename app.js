@@ -14,12 +14,12 @@ const KINDS = {
     notePlaceholder: 'リングの引っかかり方、アームの癖など',
     fields: [
       { key: 'ringStart', label: 'リングスタート位置', options: ['左', '右'] },
-      { key: 'ringShape', label: 'リング形状', options: ['通常リング', '小リング', '太リング', '大リング', 'Sフック'] },
-      { key: 'chainLength', label: 'チェーン長さ', options: ['通常', '長い', '短い'] },
+      { key: 'ringShape', label: 'リング形状', default: '通常リング', options: ['通常リング', '小リング', '太リング', '大リング', 'Sフック'] },
+      { key: 'chainLength', label: 'チェーン長さ', default: '通常', options: ['通常', '長い', '短い'] },
       // 開口部は「台を上から見た向き」で 3×3 に並べる（空文字 '' は真ん中の目印）
       { key: 'opening', label: 'フック開口部の向き', layout: 'dir',
         options: ['斜め左奥', '奥', '斜め右奥', '左', '', '右', '斜め左手前', '手前', '斜め右手前'] },
-      { key: 'antiSlip', label: '滑り込み防止', options: ['あり', 'なし'] },
+      { key: 'antiSlip', label: '滑り込み防止', default: 'なし', options: ['あり', 'なし'] },
       { key: 'aim', label: '狙い方', options: ['ひっかけ', '滑り込み'] },
       { key: 'swing', label: '振れ具合', options: ['よく振れる', '振れない'] },
       { key: 'swingUse', label: '振りの利用', options: ['よく振る', '振りを抑える'] },
@@ -38,10 +38,10 @@ const KINDS = {
     maxTries: 40,
     notePlaceholder: 'ずらし方、ハマりどころなど',
     fields: [
-      { key: 'bridge', label: '橋構造', options: ['並行', '末広', '段違い'] },
-      { key: 'bridgeWidth', label: '橋幅', options: ['普通', '広い', '狭い'] },
-      { key: 'topBarGrip', label: '上段バー滑り止め', options: ['あり', 'なし'] },
-      { key: 'armTwist', label: 'アーム捩れ', options: ['右', '左', '右強め', '左強め', 'なし'] },
+      { key: 'bridge', label: '橋構造', default: '平行', options: ['平行', '末広', '段違い'] },
+      { key: 'bridgeWidth', label: '橋幅', default: '普通', options: ['普通', '広い', '狭い'] },
+      { key: 'topBarGrip', label: '上段バー滑り止め', default: 'あり', options: ['あり', 'なし'] },
+      { key: 'armTwist', label: 'アーム捩れ', default: '右', options: ['右', '左', '右強め', '左強め', 'なし'] },
       { key: 'shape', label: '箱形状', options: ['縦長箱', 'デカ箱', '厚みある中箱', '小箱', '立方体', '薄箱'] },
       { key: 'method', label: '取り方', options: ['縦はめ', 'スライド', '押し', 'ちゃぶ台返し', 'とめがけ', '頂点突き'] },
       { key: 'get', label: 'ゲット', options: ['できた', 'できなかった'], layout: 'get' },
@@ -53,7 +53,7 @@ const KINDS = {
 
 // 項目や選択肢を変えたとき、過去の記録を新しい形に直す処理（起動時に1回）
 // 対応するものがない値は空欄になります。元の値は記録の中に残してあり、画面には出ません。
-const SCHEMA = 4;
+const SCHEMA = 5;
 const MIGRATIONS = [
   // v2：取り方の名前変更
   (r) => {
@@ -75,6 +75,13 @@ const MIGRATIONS = [
     if (!r.recorder) { r.recorder = 'Taiji'; migratedRecorder = true; }
   },
 ];
+MIGRATIONS.push(
+  // v5：橋構造「並行」→「平行」（誤字修正）、価格の追加（それまでの記録は100円）
+  (r) => {
+    if (r.kind === 'box' && r.detail.bridge === '並行') r.detail.bridge = '平行';
+    if (!r.price) r.price = PRICE_DEFAULT;
+  },
+);
 let migratedRecorder = false;
 
 // 記録者名は端末ごとに覚えておき、次の記録に自動で入れる
@@ -89,6 +96,11 @@ function migrate(r) {
   r.schema = SCHEMA;
   return true;
 }
+
+// 1プレイの価格（円）
+const PRICE_DEFAULT = 100;
+const PRICE_STEP = 100;
+const PRICE_MAX = 1000;
 
 const PHOTO_MAX_SIZE = 1600;  // 写真の長辺(px)。小さくすると容量が減る
 const PHOTO_QUALITY = 0.82;   // JPEG画質 0〜1
@@ -183,6 +195,12 @@ function toast(msg) {
 
 function hasValue(v) { return v !== null && v !== undefined && v !== '' && v !== false; }
 const emptyDetail = () => ({ tries: null, note: '' });
+// 新しく記録するときの初期値（default を指定した項目は最初から選択状態）
+function defaultDetail(kind) {
+  const d = emptyDetail();
+  KINDS[kind].fields.forEach((f) => { if (f.default) d[f.key] = f.default; });
+  return d;
+}
 
 /* =========================================================
    4) 写真の縮小（そのままだと1枚数MBになるため）
@@ -238,11 +256,14 @@ async function openForm({ from = null, duplicate = false } = {}) {
     photos: [],
     removedPhotoIds: [],
     kind: (from && from.kind) || 'hook',
-    sel: { hook: emptyDetail(), box: emptyDetail() },
+    sel: { hook: defaultDetail('hook'), box: defaultDetail('box') },
+    price: (from && from.price) || PRICE_DEFAULT,
     dirty: false,
   };
   if (from && from.kind) {
-    draft.sel[from.kind] = { ...emptyDetail(), ...JSON.parse(JSON.stringify(from.detail || {})) };
+    // 編集はその記録のまま（初期値は入れない）、「同じ設定で新規」は初期値の上に元の設定を重ねる
+    const base = editing ? emptyDetail() : defaultDetail(from.kind);
+    draft.sel[from.kind] = { ...base, ...JSON.parse(JSON.stringify(from.detail || {})) };
     // 「同じ設定で新規」は台の設定だけ引き継ぎ、結果・手数・メモは空にする
     if (duplicate) Object.assign(draft.sel[from.kind], { get: undefined, tries: null, note: '' });
   }
@@ -353,6 +374,28 @@ function renderKind() {
   box.append(el('div', { className: 'field' },
     el('span', { className: 'field-label', textContent: `手数（1〜${def.maxTries}）` }),
     el('div', { className: 'stepper' }, minus, out, plus, clearBtn)));
+
+  // 1プレイの価格（100円単位）と、使った金額
+  const priceOut = el('output', { className: 'stepper-value price-value' });
+  const total = el('span', { className: 'price-total' });
+  const showPrice = () => {
+    priceOut.textContent = `${draft.price}円`;
+    total.textContent = sel.tries ? `合計 ${(draft.price * sel.tries).toLocaleString()}円` : '';
+  };
+  const stepPrice = (n) => {
+    draft.price = Math.min(PRICE_MAX, Math.max(PRICE_STEP, draft.price + n));
+    draft.dirty = true;
+    showPrice();
+  };
+  const pMinus = el('button', { type: 'button', className: 'step-btn', textContent: '−', ariaLabel: `${PRICE_STEP}円下げる` });
+  const pPlus = el('button', { type: 'button', className: 'step-btn', textContent: '＋', ariaLabel: `${PRICE_STEP}円上げる` });
+  pMinus.addEventListener('click', () => stepPrice(-PRICE_STEP));
+  pPlus.addEventListener('click', () => stepPrice(PRICE_STEP));
+  [minus, plus, clearBtn].forEach((b) => b.addEventListener('click', showPrice)); // 手数が変わったら合計も更新
+  showPrice();
+  box.append(el('div', { className: 'field' },
+    el('span', { className: 'field-label', textContent: '1プレイの価格' }),
+    el('div', { className: 'stepper' }, pMinus, priceOut, pPlus, total)));
 
   // 種類ごとの自由メモ
   const note = el('textarea', { id: 'noteInput', rows: 4, placeholder: def.notePlaceholder, value: sel.note || '' });
@@ -508,6 +551,7 @@ async function saveDraft() {
     location: draft.location,                 // {lat, lng, accuracy} または null
     place,                                    // 店舗名など
     recorder,                                 // 記録者
+    price: draft.price,                       // 1プレイの価格（円）
     memo,                                     // 全体のメモ
     kind: draft.kind,                         // 'hook' | 'box'
     detail,                                   // 選んだ種類の項目＋tries（手数）＋note（種類のメモ）
@@ -697,6 +741,8 @@ async function renderDetail(id) {
     const dt = rec.detail || {};
     const kindRows = def.fields.map((f) => [f.label, dt[f.key] || '—']);
     kindRows.push(['手数', dt.tries ? `${dt.tries}手` : '—']);
+    kindRows.push(['1プレイの価格', rec.price ? `${rec.price}円` : '—']);
+    if (rec.price && dt.tries) kindRows.push(['使った金額', `${(rec.price * dt.tries).toLocaleString()}円`]);
     if (dt.note) kindRows.push([`${def.label}のメモ`, dt.note]);
     body.append(el('h3', { className: 'detail-head', textContent: `${def.label}の設定` }));
     body.append(el('dl', { className: 'meta meta-wide' }, kindRows.map(metaRow)));
@@ -870,6 +916,8 @@ function recordToRow(rec) {
     'ゲット': dt.get || '',
     'ゲット数': dt.get === 'できた' ? 1 : 0,
     '手数': dt.tries || '',
+    '1プレイの価格': rec.price || '',
+    '使った金額': rec.price && dt.tries ? rec.price * dt.tries : '',
   };
   // フック・箱の全項目を列にする（記録していない側は空欄）
   Object.values(KINDS).forEach((k) => k.fields.forEach((f) => {

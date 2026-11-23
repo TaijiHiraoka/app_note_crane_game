@@ -307,3 +307,7 @@ button { font: inherit; }
 #syncBtn:disabled { opacity: .5; }
 #sheetLink { display: block; font-weight: 700; }
 #sheetLink[hidden] { display: none; }
+
+/* ---------- 価格 ---------- */
+.price-value { min-width: 5.5rem; font-size: 1.5rem; }
+.price-total { color: var(--muted); font-size: .9rem; }
