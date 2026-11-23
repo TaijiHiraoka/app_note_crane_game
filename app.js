@@ -53,7 +53,7 @@ const KINDS = {
 
 // 項目や選択肢を変えたとき、過去の記録を新しい形に直す処理（起動時に1回）
 // 対応するものがない値は空欄になります。元の値は記録の中に残してあり、画面には出ません。
-const SCHEMA = 3;
+const SCHEMA = 4;
 const MIGRATIONS = [
   // v2：取り方の名前変更
   (r) => {
@@ -70,7 +70,17 @@ const MIGRATIONS = [
     if (!d.finePos) delete d.finePos;
     if (!d.fineDist) delete d.fineDist;
   },
+  // v4：記録者を追加（それまでの記録はすべて Taiji さんのもの）
+  (r) => {
+    if (!r.recorder) { r.recorder = 'Taiji'; migratedRecorder = true; }
+  },
 ];
+let migratedRecorder = false;
+
+// 記録者名は端末ごとに覚えておき、次の記録に自動で入れる
+const RECORDER_KEY = 'crane-notes.recorder';
+function getRecorder() { try { return localStorage.getItem(RECORDER_KEY) || ''; } catch { return ''; } }
+function setRecorder(name) { try { localStorage.setItem(RECORDER_KEY, name); } catch { /* 無視 */ } }
 
 function migrate(r) {
   if ((r.schema || 0) >= SCHEMA) return false;
@@ -240,6 +250,8 @@ async function openForm({ from = null, duplicate = false } = {}) {
   $('#formTitle').textContent = editing ? '記録を編集' : '新しい記録';
   $('#formTime').textContent = `${fmtDay(draft.createdAt)} ${fmtTime(draft.createdAt)}`;
   $('#placeInput').value = from ? (from.place || '') : await lastPlace();
+  // 編集のときは元の記録者、新規は端末に覚えている名前
+  $('#recorderInput').value = editing ? (from.recorder || '') : getRecorder();
   $('#memoInput').value = editing ? (from.memo || '') : '';
   await fillPlaceList();
 
@@ -468,6 +480,7 @@ async function saveDraft() {
   if (!draft) return;
   saveNoteToDraft();
   const place = $('#placeInput').value.trim();
+  const recorder = $('#recorderInput').value.trim();
   const memo = $('#memoInput').value.trim();
   const detail = JSON.parse(JSON.stringify(draft.sel[draft.kind])); // undefined の項目はここで消える
   if (!detail.note) delete detail.note;
@@ -494,6 +507,7 @@ async function saveDraft() {
     updatedAt: new Date().toISOString(),
     location: draft.location,                 // {lat, lng, accuracy} または null
     place,                                    // 店舗名など
+    recorder,                                 // 記録者
     memo,                                     // 全体のメモ
     kind: draft.kind,                         // 'hook' | 'box'
     detail,                                   // 選んだ種類の項目＋tries（手数）＋note（種類のメモ）
@@ -504,6 +518,7 @@ async function saveDraft() {
   const newPhotos = allPhotos.filter((p) => !p.saved).map((p) => ({ id: p.id, recordId: record.id, blob: p.blob }));
   const removed = draft.removedPhotoIds.slice();
   const wasEdit = draft.mode === 'edit';
+  if (!wasEdit && recorder) setRecorder(recorder);
 
   try {
     await dbWrite((records, photoStore) => {
@@ -664,7 +679,7 @@ async function renderDetail(id) {
 
   body.append(el('div', { className: 'detail-tags' }, tagsFor(rec)));
 
-  const rows = [['日時', `${fmtDay(d)} ${fmtTime(d)}`], ['店舗', rec.place || '—']];
+  const rows = [['日時', `${fmtDay(d)} ${fmtTime(d)}`], ['店舗', rec.place || '—'], ['記録者', rec.recorder || '—']];
   if (rec.location) {
     const { lat, lng } = rec.location;
     rows.push(['位置', el('a', {
@@ -845,6 +860,7 @@ function recordToRow(rec) {
   const def = KINDS[rec.kind];
   const v = {
     '記録ID': rec.id,
+    '記録者': rec.recorder || '',
     '日時': { date: rec.createdAt },
     '日付': localDate(d),
     '時刻': fmtTime(d),
@@ -946,7 +962,7 @@ $('#cancelBtn').addEventListener('click', () => {
 $('#saveBtn').addEventListener('click', saveDraft);
 $('#locRetry').addEventListener('click', requestLocation);
 document.querySelectorAll('.kind-switch button').forEach((b) => b.addEventListener('click', () => setKind(b.dataset.kind)));
-['#placeInput', '#memoInput'].forEach((sel) => $(sel).addEventListener('input', () => { if (draft) draft.dirty = true; }));
+['#placeInput', '#recorderInput', '#memoInput'].forEach((sel) => $(sel).addEventListener('input', () => { if (draft) draft.dirty = true; }));
 ['#cameraInput', '#pickInput'].forEach((sel) => {
   $(sel).addEventListener('change', async (e) => {
     const files = [...e.target.files];
@@ -986,6 +1002,8 @@ async function migrateRecords() {
   const records = await dbGetAll('records');
   const changed = records.filter(migrate);
   if (changed.length) await dbWrite((recs) => changed.forEach((r) => recs.put(r)));
+  // 以前からの記録があった端末（＝Taijiさんの端末）は、記録者名を Taiji にしておく
+  if (migratedRecorder && !getRecorder()) setRecorder('Taiji');
 }
 
 migrateRecords().catch(() => {}).finally(renderList);
