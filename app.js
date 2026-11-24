@@ -35,15 +35,18 @@ const KINDS = {
   },
   box: {
     label: '箱',
-    maxTries: 40,
+    maxTries: 40,       // 箱は段階ごとの上限（合計はこれを超えてもOK）
+    stagedTries: true,  // 手数は「箱状態遷移」の合計で決まる
     notePlaceholder: 'ずらし方、ハマりどころなど',
     fields: [
       { key: 'bridge', label: '橋構造', default: '平行', options: ['平行', '末広', '段違い'] },
       { key: 'bridgeWidth', label: '橋幅', default: '普通', options: ['普通', '広い', '狭い'] },
       { key: 'topBarGrip', label: '上段バー滑り止め', default: 'あり', options: ['あり', 'なし'] },
       { key: 'armTwist', label: 'アーム捩れ', default: '右', options: ['右', '左', '右強め', '左強め', 'なし'] },
-      { key: 'shape', label: '箱形状', options: ['縦長箱', 'デカ箱', '厚みある中箱', '小箱', '立方体', '薄箱'] },
-      { key: 'method', label: '取り方', options: ['縦はめ', 'スライド', '押し', 'ちゃぶ台返し', 'とめがけ', '頂点突き'] },
+      { key: 'shape', label: '箱形状', options: ['縦長箱', '中箱', '中箱厚みあり', '小箱', 'ぬ〜すと', '立方体', '薄箱'] },
+      { key: 'method', label: '取り方', options: ['縦はめ', '横はめ', 'スライド', 'とめがけ', '頂点突き', 'ちゃぶ台', '押し込み', '対角持ち'] },
+      // 箱状態遷移と手数（段階ごとの手数の合計が全体の手数になる）
+      { key: 'stages', type: 'stages', label: '箱状態遷移と手数' },
       { key: 'get', label: 'ゲット', options: ['できた', 'できなかった'], layout: 'get' },
       { key: 'assist', label: 'アシスト', options: ['あり', 'なし'] },
     ],
@@ -53,7 +56,7 @@ const KINDS = {
 
 // 項目や選択肢を変えたとき、過去の記録を新しい形に直す処理（起動時に1回）
 // 対応するものがない値は空欄になります。元の値は記録の中に残してあり、画面には出ません。
-const SCHEMA = 5;
+const SCHEMA = 6;
 const MIGRATIONS = [
   // v2：取り方の名前変更
   (r) => {
@@ -82,6 +85,16 @@ MIGRATIONS.push(
     if (!r.price) r.price = PRICE_DEFAULT;
   },
 );
+MIGRATIONS.push(
+  // v6：箱形状・取り方の選択肢を変更
+  (r) => {
+    if (r.kind !== 'box') return;
+    const shape = { '厚みある中箱': '中箱厚みあり' };
+    const method = { '押し': '押し込み', 'ちゃぶ台返し': 'ちゃぶ台' };
+    if (shape[r.detail.shape]) r.detail.shape = shape[r.detail.shape];
+    if (method[r.detail.method]) r.detail.method = method[r.detail.method];
+  },
+);
 let migratedRecorder = false;
 
 // 記録者名は端末ごとに覚えておき、次の記録に自動で入れる
@@ -96,6 +109,15 @@ function migrate(r) {
   r.schema = SCHEMA;
   return true;
 }
+
+// 箱状態遷移の段階
+const STAGES = [
+  { key: 'stageBridge', label: '① 橋はめ状態まで', col: '①橋はめまで' },
+  { key: 'stageReach', label: '② リーチ（技使え・ミリ残り）まで', col: '②リーチまで' },
+  { key: 'stageGet', label: '③ ゲットまで', col: '③ゲットまで' },
+];
+const LAPS_MAX = 20;
+const stageSum = (d) => STAGES.reduce((a, st) => a + (d[st.key] || 0), 0);
 
 // 1プレイの価格（円）
 const PRICE_DEFAULT = 100;
@@ -265,7 +287,12 @@ async function openForm({ from = null, duplicate = false } = {}) {
     const base = editing ? emptyDetail() : defaultDetail(from.kind);
     draft.sel[from.kind] = { ...base, ...JSON.parse(JSON.stringify(from.detail || {})) };
     // 「同じ設定で新規」は台の設定だけ引き継ぎ、結果・手数・メモは空にする
-    if (duplicate) Object.assign(draft.sel[from.kind], { get: undefined, tries: null, note: '' });
+    if (duplicate) {
+      Object.assign(draft.sel[from.kind], { get: undefined, tries: null, note: '', laps: undefined });
+      STAGES.forEach((st) => { draft.sel[from.kind][st.key] = undefined; });
+    }
+    // 段階を入れていない過去の箱の記録は、合計の手数をそのまま残しておく
+    if (editing && from.kind === 'box' && !stageSum(draft.sel.box)) draft.legacyTries = draft.sel.box.tries || null;
   }
 
   $('#formTitle').textContent = editing ? '記録を編集' : '新しい記録';
@@ -333,8 +360,15 @@ function renderKind() {
   const box = $('#kindFields');
   box.replaceChildren();
 
+  // 価格の合計表示は、手数が変わるたびに更新する
+  const priceTotal = el('span', { className: 'price-total' });
+  const showPrice = () => {
+    priceTotal.textContent = sel.tries ? `合計 ${(draft.price * sel.tries).toLocaleString()}円` : '';
+  };
+
   // 選択式の項目
   def.fields.forEach((f) => {
+    if (f.type === 'stages') { box.append(stagesField(f, def, sel, showPrice)); return; }
     const chips = el('div', {
       className: 'chips' + (f.layout ? ` chips-${f.layout}` : ''),
       attrs: { role: 'group', 'aria-label': f.label },
@@ -353,7 +387,8 @@ function renderKind() {
     box.append(el('div', { className: 'field' }, el('span', { className: 'field-label', textContent: f.label }), chips));
   });
 
-  // 手数（− ＋ で選ぶ）
+  // 手数（− ＋ で選ぶ）※箱は箱状態遷移の合計なのでここでは出さない
+  if (!def.stagedTries) {
   const out = el('output', { className: 'stepper-value' });
   const clearBtn = el('button', { type: 'button', className: 'text-btn small', textContent: 'クリア' });
   const showTries = () => {
@@ -374,25 +409,23 @@ function renderKind() {
   box.append(el('div', { className: 'field' },
     el('span', { className: 'field-label', textContent: `手数（1〜${def.maxTries}）` }),
     el('div', { className: 'stepper' }, minus, out, plus, clearBtn)));
+  [minus, plus, clearBtn].forEach((b) => b.addEventListener('click', showPrice)); // 手数が変わったら合計も更新
+  }
 
   // 1プレイの価格（100円単位）と、使った金額
   const priceOut = el('output', { className: 'stepper-value price-value' });
-  const total = el('span', { className: 'price-total' });
-  const showPrice = () => {
-    priceOut.textContent = `${draft.price}円`;
-    total.textContent = sel.tries ? `合計 ${(draft.price * sel.tries).toLocaleString()}円` : '';
-  };
+  const total = priceTotal;
+  const showPriceValue = () => { priceOut.textContent = `${draft.price}円`; showPrice(); };
   const stepPrice = (n) => {
     draft.price = Math.min(PRICE_MAX, Math.max(PRICE_STEP, draft.price + n));
     draft.dirty = true;
-    showPrice();
+    showPriceValue();
   };
   const pMinus = el('button', { type: 'button', className: 'step-btn', textContent: '−', ariaLabel: `${PRICE_STEP}円下げる` });
   const pPlus = el('button', { type: 'button', className: 'step-btn', textContent: '＋', ariaLabel: `${PRICE_STEP}円上げる` });
   pMinus.addEventListener('click', () => stepPrice(-PRICE_STEP));
   pPlus.addEventListener('click', () => stepPrice(PRICE_STEP));
-  [minus, plus, clearBtn].forEach((b) => b.addEventListener('click', showPrice)); // 手数が変わったら合計も更新
-  showPrice();
+  showPriceValue();
   box.append(el('div', { className: 'field' },
     el('span', { className: 'field-label', textContent: '1プレイの価格' }),
     el('div', { className: 'stepper' }, pMinus, priceOut, pPlus, total)));
@@ -402,6 +435,57 @@ function renderKind() {
   note.addEventListener('input', () => { draft.dirty = true; });
   box.append(el('label', { className: 'field' },
     el('span', { className: 'field-label', textContent: `${def.label}のメモ` }), note));
+}
+
+// 箱状態遷移と手数：段階ごとのカウント＋何巡したか。合計が全体の手数になる
+function stagesField(f, def, sel, onChange) {
+  const wrap = el('div', { className: 'field stages' });
+  wrap.append(el('span', { className: 'field-label', textContent: f.label }));
+  const totalLine = el('p', { className: 'stages-total' });
+
+  const update = () => {
+    const sum = stageSum(sel);
+    sel.tries = sum || draft.legacyTries || null;
+    totalLine.replaceChildren(
+      el('span', { textContent: '合計 ' }),
+      el('strong', { textContent: sel.tries ? `${sel.tries}手` : '—' }),
+    );
+    if (!sum && draft.legacyTries) {
+      totalLine.append(el('span', { className: 'stages-note', textContent: '（以前の記録。段階を入れると置きかわります）' }));
+    }
+    onChange();
+  };
+
+  const row = (label, get, set, min, max, unit) => {
+    const out = el('output', { className: 'stage-value' });
+    const show = () => { const v = get(); out.textContent = v ? `${v}${unit}` : (min === 0 ? `0${unit}` : '—'); };
+    const step = (n) => {
+      set(Math.min(max, Math.max(min, (get() || 0) + n)));
+      draft.dirty = true;
+      show();
+      update();
+      refreshAll();
+    };
+    const minus = el('button', { type: 'button', className: 'step-btn small', textContent: '−', ariaLabel: `${label}を1減らす` });
+    const plus = el('button', { type: 'button', className: 'step-btn small', textContent: '＋', ariaLabel: `${label}を1増やす` });
+    minus.addEventListener('click', () => step(-1));
+    plus.addEventListener('click', () => step(1));
+    show();
+    rows.push(show);
+    return el('div', { className: 'stage-row' }, el('span', { className: 'stage-label', textContent: label }),
+      el('div', { className: 'stepper' }, minus, out, plus));
+  };
+  const rows = [];
+  const refreshAll = () => rows.forEach((fn) => fn());
+
+  STAGES.forEach((st) => wrap.append(row(st.label, () => sel[st.key], (v) => {
+    sel[st.key] = v;
+    if (v && !sel.laps) sel.laps = 1; // 段階を数え始めたら1巡目
+  }, 0, def.maxTries, '手')));
+  wrap.append(row('何巡したか（出戻り）', () => sel.laps, (v) => { sel.laps = v; }, 1, LAPS_MAX, '巡'));
+  wrap.append(totalLine);
+  update();
+  return wrap;
 }
 
 function saveNoteToDraft() {
@@ -527,6 +611,10 @@ async function saveDraft() {
   const memo = $('#memoInput').value.trim();
   const detail = JSON.parse(JSON.stringify(draft.sel[draft.kind])); // undefined の項目はここで消える
   if (!detail.note) delete detail.note;
+  if (KINDS[draft.kind].stagedTries && !stageSum(detail)) {
+    STAGES.forEach((st) => delete detail[st.key]);
+    delete detail.laps;
+  }
   if (!detail.tries) delete detail.tries;
 
   if (!draft.photos.length && !draft.prize && !place && !memo && !Object.keys(detail).length) {
@@ -651,7 +739,7 @@ async function renderList() {
     const dt = rec.detail || {};
     let keys = def ? def.summary.map((k) => dt[k]).filter(Boolean) : [];
     // 代表項目が空なら、選んである項目から最大3つ表示
-    if (def && !keys.length) keys = def.fields.filter((f) => f.key !== 'get' && dt[f.key]).slice(0, 3).map((f) => dt[f.key]);
+    if (def && !keys.length) keys = def.fields.filter((f) => f.key !== 'get' && !f.type && dt[f.key]).slice(0, 3).map((f) => dt[f.key]);
     const thumbId = rec.prizePhotoId || rec.photoIds[0];  // 景品の写真を優先してサムネに
     const sub = keys.length ? keys.join(' / ') : (rec.memo || (thumbId ? '写真のみ' : ''));
 
@@ -739,7 +827,15 @@ async function renderDetail(id) {
   const def = KINDS[rec.kind];
   if (def) {
     const dt = rec.detail || {};
-    const kindRows = def.fields.map((f) => [f.label, dt[f.key] || '—']);
+    const kindRows = [];
+    def.fields.forEach((f) => {
+      if (f.type === 'stages') {
+        STAGES.forEach((st) => kindRows.push([st.label, dt[st.key] != null ? `${dt[st.key]}手` : '—']));
+        kindRows.push(['何巡したか', dt.laps ? `${dt.laps}巡` : '—']);
+        return;
+      }
+      kindRows.push([f.label, dt[f.key] || '—']);
+    });
     kindRows.push(['手数', dt.tries ? `${dt.tries}手` : '—']);
     kindRows.push(['1プレイの価格', rec.price ? `${rec.price}円` : '—']);
     if (rec.price && dt.tries) kindRows.push(['使った金額', `${(rec.price * dt.tries).toLocaleString()}円`]);
@@ -922,9 +1018,22 @@ function recordToRow(rec) {
   // フック・箱の全項目を列にする（記録していない側は空欄）
   Object.values(KINDS).forEach((k) => k.fields.forEach((f) => {
     if (f.key === 'get') return;
+    if (f.type === 'stages') {
+      STAGES.forEach((st) => { if (!(st.col in v)) v[st.col] = ''; });
+      if (!('巡回数' in v)) v['巡回数'] = '';
+      return;
+    }
     if (!(f.label in v)) v[f.label] = '';
   }));
-  if (def) def.fields.forEach((f) => { if (f.key !== 'get') v[f.label] = dt[f.key] || ''; });
+  if (def) def.fields.forEach((f) => {
+    if (f.key === 'get') return;
+    if (f.type === 'stages') {
+      STAGES.forEach((st) => { v[st.col] = dt[st.key] != null ? dt[st.key] : ''; });
+      v['巡回数'] = dt.laps || '';
+      return;
+    }
+    v[f.label] = dt[f.key] || '';
+  });
   v['種類のメモ'] = dt.note || '';
   v['メモ'] = rec.memo || '';
   v['緯度'] = rec.location ? rec.location.lat : '';

@@ -311,3 +311,14 @@ button { font: inherit; }
 /* ---------- 価格 ---------- */
 .price-value { min-width: 5.5rem; font-size: 1.5rem; }
 .price-total { color: var(--muted); font-size: .9rem; }
+
+/* ---------- 箱状態遷移 ---------- */
+.stages { border: 1px solid var(--line); border-radius: 12px; padding: .7rem .8rem; background: var(--surface); }
+.stage-row { display: flex; align-items: center; justify-content: space-between; gap: .5rem; padding: .35rem 0; border-bottom: 1px dashed var(--line); }
+.stage-label { font-size: .92rem; line-height: 1.35; flex: 1; }
+.stage-row .stepper { gap: .4rem; flex: none; }
+.step-btn.small { width: 2.6rem; height: 2.6rem; font-size: 1.25rem; }
+.stage-value { min-width: 2.8rem; text-align: center; font-size: 1.15rem; font-weight: 700; font-variant-numeric: tabular-nums; }
+.stages-total { margin: .55rem 0 0; font-size: .95rem; }
+.stages-total strong { font-size: 1.3rem; }
+.stages-note { color: var(--muted); font-size: .8rem; }
